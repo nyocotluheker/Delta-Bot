@@ -9,7 +9,9 @@ import pino from 'pino';
 import FileType from 'file-type';
 
 // SocketON imports (pengganti @shennmine/baileys)
-import makeWASocket, {
+import pkg from 'socketon';
+const { 
+    default: makeWASocket, 
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
@@ -22,14 +24,15 @@ import makeWASocket, {
     generateWAMessage,
     generateWAMessageFromContent,
     Browsers
-} from 'socketon';
+} = pkg;
 
+// Sisanya tetap sama...
 import { Boom } from '@hapi/boom';
 
 // Utils imports
-import { color } from './w-shennmine/lib/color.js';
-import { smsg, sleep, getBuffer } from './w-shennmine/lib/myfunction.js';
-import { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } from './w-shennmine/lib/exif.js';
+import { color } from './system/lib/color.js';
+import { smsg, sleep, getBuffer } from './system/lib/myfunction.js';
+import { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } from './system/lib/exif.js';
 
 // Dapatkan __dirname di ESM
 const __filename = fileURLToPath(import.meta.url);

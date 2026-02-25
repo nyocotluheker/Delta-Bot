@@ -11,7 +11,8 @@ import path from 'path';
 import os from 'os';
 import speed from 'performance-now';
 import { spawn, exec, execSync } from 'child_process';
-import { getContentType } from 'socketon';
+import pkg from 'socketon';
+const { getContentType } = pkg;
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,7 +55,8 @@ const clientHandler = async (client, m, chatUpdate, store) => {
         const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '';
         const args = body.trim().split(/ +/).slice(1);
         const pushname = m.pushName || "No Name";
-        const text = q = args.join(" ");
+        const text  = args.join(" ");
+        const q = text;
         const quoted = m.quoted ? m.quoted : m;
         const mime = (quoted.msg || quoted).mimetype || '';
         const qmsg = (quoted.msg || quoted);
