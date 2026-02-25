@@ -18,6 +18,6 @@ this project has 3 main features:
 **attention, and need to be read:**  
 1. this script does not contain malware, backdoors or anything that is detrimental to its users  
 2. open source, you are prohibited from selling it, but if it has many features (from you) it is your right  
-3. when this script is misused, I (KyuuRzy) am not responsible for any losses, because this script is open source, safe and clean from disturbing its users  
+3. when this script is misused, I (azax) am not responsible for any losses, because this script is open source, safe and clean from disturbing its users  
 4. free for all, no restrictions
 # Delta-Bot
