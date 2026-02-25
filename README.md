@@ -1,4 +1,4 @@
-# laurine-wabot (simple selfbot)
+# delta-wabot (simple selfbot)
 
 <p align="left">
   <img src="https://github.com/kiuur.png" width="390"/>
