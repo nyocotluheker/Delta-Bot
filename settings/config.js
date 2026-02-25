@@ -9,7 +9,7 @@ const config = {
     owner: "-",
     botNumber: "-",
     setPair: "AAAAAAAA",
-    thumbUrl: "https://github.com/kiuur.png",
+    thumbUrl: "https://github.com/nyocotluheker/Delta-Bot/blob/8f8e8720e25023c88746288d0d23e0efc647e177/system/lib/media/IMG_20250729_172932.jpg",
     session: "sessions",
     status: {
         public: true,
