@@ -1,7 +1,7 @@
 # delta-wabot (simple selfbot)
 
 <p align="left">
-  <img src="https://github.com/nyocotluheker/Delta-Bot/system/lib/media/about-you.jpg" width="390"/>
+  <img src="https://github.com/nyocotluheker/Delta-Bot/blob/6ca5876fe0f573fe98eafbe1a7fb9da79bd75068/system/lib/media/about-you.jpg" width="390"/>
 </p>
 
 this project has 3 main features:
