@@ -20,3 +20,4 @@ this project has 3 main features:
 2. open source, you are prohibited from selling it, but if it has many features (from you) it is your right  
 3. when this script is misused, I (KyuuRzy) am not responsible for any losses, because this script is open source, safe and clean from disturbing its users  
 4. free for all, no restrictions
+# Delta-Bot
