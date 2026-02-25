@@ -1,0 +1,385 @@
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs';
+import readline from 'readline';
+import crypto from 'crypto';
+import path from 'path';
+import { spawn, exec, execSync } from 'child_process';
+import pino from 'pino';
+import FileType from 'file-type';
+
+// SocketON imports (pengganti @shennmine/baileys)
+import makeWASocket, {
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeInMemoryStore,
+    jidDecode,
+    proto,
+    delay,
+    downloadContentFromMessage,
+    getContentType,
+    generateWAMessage,
+    generateWAMessageFromContent,
+    Browsers
+} from 'socketon';
+
+import { Boom } from '@hapi/boom';
+
+// Utils imports
+import { color } from './w-shennmine/lib/color.js';
+import { smsg, sleep, getBuffer } from './w-shennmine/lib/myfunction.js';
+import { imageToWebp, videoToWebp, writeExifImg, writeExifVid, addExif } from './w-shennmine/lib/exif.js';
+
+// Dapatkan __dirname di ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load config
+const loadConfig = () => {
+    const configPath = join(__dirname, './settings/config.js');
+    return import(`file://${configPath}?t=${Date.now()}`).then(module => module.default);
+};
+
+const listcolor = ['cyan', 'magenta', 'green', 'yellow', 'blue'];
+const randomcolor = listcolor[Math.floor(Math.random() * listcolor.length)];
+
+const question = (text) => {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+    return new Promise((resolve) => {
+        rl.question(color(text, randomcolor), (answer) => {
+            resolve(answer);
+            rl.close();
+        });
+    });
+};
+
+const clientstart = async () => {
+    const config = await loadConfig();
+    
+    const store = makeInMemoryStore({
+        logger: pino().child({ 
+            level: 'silent',
+            stream: 'store' 
+        })
+    });
+    
+    const { state, saveCreds } = await useMultiFileAuthState(`./${config.session}`);
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    
+    const client = makeWASocket({
+        logger: pino({ level: "silent" }),
+        printQRInTerminal: !config.status.terminal,
+        auth: state,
+        browser: ["Ubuntu", "Chrome", "20.0.0.0"]
+    });
+
+    if (config.status.terminal && !client.authState.creds.registered) {
+        const phoneNumber = await question('/> please enter your WhatsApp number, starting with 62:\n> number: ');
+        const code = await client.requestPairingCode(phoneNumber, config.setPair);
+        console.log(`your pairing code: ${code}`);
+    }
+    
+    store.bind(client.ev);
+    
+    client.ev.on('creds.update', saveCreds);
+    
+    client.ev.on('messages.upsert', async chatUpdate => {
+        try {
+            const mek = chatUpdate.messages[0];
+            if (!mek.message) return;
+            
+            if (mek.message.ephemeralMessage) {
+                mek.message = mek.message.ephemeralMessage.message;
+            }
+            
+            if (config.status.reactsw && mek.key && mek.key.remoteJid === 'status@broadcast') {
+                let emoji = ['😘', '😭', '😂', '😹', '😍', '😋', '🙏', '😜', '😢', '😠', '🤫', '😎'];
+                let sigma = emoji[Math.floor(Math.random() * emoji.length)];
+                await client.readMessages([mek.key]);
+                client.sendMessage('status@broadcast', { 
+                    react: { 
+                        text: sigma, 
+                        key: mek.key 
+                    }
+                }, { statusJidList: [mek.key.participant] });
+            }
+            
+            if (!client.public && !mek.key.fromMe && chatUpdate.type === 'notify') return;
+            if (mek.key.id.startsWith('SH3NN-') && mek.key.id.length === 12) return;
+            
+            const m = await smsg(client, mek, store);
+            
+            // Dynamic import untuk message handler
+            const messageModule = await import(`./message.js?t=${Date.now()}`);
+            messageModule.default(client, m, chatUpdate, store);
+        } catch (err) {
+            console.log(err);
+        }
+    });
+
+    client.decodeJid = (jid) => {
+        if (!jid) return jid;
+        if (/:\d+@/gi.test(jid)) {
+            let decode = jidDecode(jid) || {};
+            return decode.user && decode.server && decode.user + '@' + decode.server || jid;
+        } else return jid;
+    };
+
+    client.ev.on('contacts.update', update => {
+        for (let contact of update) {
+            let id = client.decodeJid(contact.id);
+            if (store && store.contacts) store.contacts[id] = {
+                id,
+                name: contact.notify
+            };
+        }
+    });
+
+    // Import connection handler dynamically
+    const { konek } = await import('./system/lib/connection/connect.js');
+    
+    client.ev.on('connection.update', (update) => {
+        konek({ client, update, clientstart, DisconnectReason, Boom });
+    });
+    
+    // Helper methods
+    client.public = (await loadConfig()).status.public;
+    
+    client.deleteMessage = async (chatId, key) => {
+        try {
+            await client.sendMessage(chatId, { delete: key });
+            console.log(`Pesan dihapus: ${key.id}`);
+        } catch (error) {
+            console.error('Gagal menghapus pesan:', error);
+        }
+    };
+
+    client.sendText = async (jid, text, quoted = '', options) => {
+        client.sendMessage(jid, {
+            text: text,
+            ...options
+        }, { quoted });
+    };
+    
+    client.downloadMediaMessage = async (message) => {
+        let mime = (message.msg || message).mimetype || '';
+        let messageType = message.mtype ? message.mtype.replace(/Message/gi, '') : mime.split('/')[0];
+        const stream = await downloadContentFromMessage(message, messageType);
+        let buffer = Buffer.from([]);
+        for await(const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk]);
+        }
+        return buffer;
+    };
+
+    client.sendImageAsSticker = async (jid, path, quoted, options = {}) => {
+        let buff = Buffer.isBuffer(path) ? 
+            path : /^data:.*?\/.*?;base64,/i.test(path) ?
+            Buffer.from(path.split(',')[1], 'base64') : /^https?:\/\//.test(path) ?
+            await (await getBuffer(path)) : fs.existsSync(path) ? 
+            fs.readFileSync(path) : Buffer.alloc(0);
+        
+        let buffer;
+        if (options && (options.packname || options.author)) {
+            buffer = await writeExifImg(buff, options);
+        } else {
+            buffer = await addExif(buff);
+        }
+        
+        await client.sendMessage(jid, { 
+            sticker: buffer, 
+            ...options 
+        }, { quoted });
+        return buffer;
+    };
+    
+    client.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
+        let quoted = message.msg ? message.msg : message;
+        let mime = (message.msg || message).mimetype || "";
+        let messageType = message.mtype ? message.mtype.replace(/Message/gi, "") : mime.split("/")[0];
+
+        const stream = await downloadContentFromMessage(quoted, messageType);
+        let buffer = Buffer.from([]);
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk]);
+        }
+
+        let type = await FileType.fromBuffer(buffer);
+        let trueFileName = attachExtension ? filename + "." + type.ext : filename;
+        await fs.promises.writeFile(trueFileName, buffer);
+        
+        return trueFileName;
+    };
+
+    client.sendVideoAsSticker = async (jid, path, quoted, options = {}) => {
+        let buff = Buffer.isBuffer(path) ? 
+            path : /^data:.*?\/.*?;base64,/i.test(path) ?
+            Buffer.from(path.split(',')[1], 'base64') : /^https?:\/\//.test(path) ?
+            await (await getBuffer(path)) : fs.existsSync(path) ? 
+            fs.readFileSync(path) : Buffer.alloc(0);
+
+        let buffer;
+        if (options && (options.packname || options.author)) {
+            buffer = await writeExifVid(buff, options);
+        } else {
+            buffer = await videoToWebp(buff);
+        }
+
+        await client.sendMessage(jid, {
+            sticker: buffer, 
+            ...options 
+        }, { quoted });
+        return buffer;
+    };
+
+    client.getFile = async (PATH, returnAsFilename) => {
+        let res, filename;
+        const data = Buffer.isBuffer(PATH) ?
+            PATH : /^data:.*?\/.*?;base64,/i.test(PATH) ?
+            Buffer.from(PATH.split(',')[1], 'base64') : /^https?:\/\//.test(PATH) ?
+            await (res = await fetch(PATH)).buffer() : fs.existsSync(PATH) ?
+            (filename = PATH, fs.readFileSync(PATH)) : typeof PATH === 'string' ? 
+            PATH : Buffer.alloc(0);
+            
+        if (!Buffer.isBuffer(data)) throw new TypeError('Result is not a buffer');
+        const type = await FileType.fromBuffer(data) || {
+            mime: 'application/octet-stream',
+            ext: '.bin'
+        };
+        
+        const tmpDir = join(__dirname, './tmp');
+        if (!fs.existsSync(tmpDir)) {
+            await fs.promises.mkdir(tmpDir, { recursive: true });
+        }
+        
+        if (data && returnAsFilename && !filename) {
+            filename = join(tmpDir, new Date() * 1 + '.' + type.ext);
+            await fs.promises.writeFile(filename, data);
+        }
+        
+        return {
+            res,
+            filename,
+            ...type,
+            data,
+            deleteFile() {
+                return filename && fs.promises.unlink(filename);
+            }
+        };
+    };
+    
+    client.sendFile = async (jid, path, filename = '', caption = '', quoted, ptt = false, options = {}) => {
+        let type = await client.getFile(path, true);
+        let { res, data: file, filename: pathFile } = type;
+        
+        let opt = { filename };
+        if (quoted) opt.quoted = quoted;
+        
+        let mtype = '', mimetype = type.mime;
+        
+        if (/webp/.test(type.mime) || (/image/.test(type.mime) && options.asSticker)) {
+            mtype = 'sticker';
+        } else if (/image/.test(type.mime) || (/webp/.test(type.mime) && options.asImage)) {
+            mtype = 'image';
+        } else if (/video/.test(type.mime)) {
+            mtype = 'video';
+        } else if (/audio/.test(type.mime)) {
+            mtype = 'audio';
+            mimetype = ptt ? 'audio/ogg; codecs=opus' : 'audio/mpeg';
+        } else {
+            mtype = 'document';
+        }
+        
+        if (options.asDocument) mtype = 'document';
+        
+        let message = {
+            ...options,
+            caption,
+            ptt,
+            [mtype]: pathFile ? { url: pathFile } : file,
+            mimetype
+        };
+        
+        let m;
+        try {
+            m = await client.sendMessage(jid, message, {
+                ...opt,
+                ...options
+            });
+        } catch (e) {
+            console.error(e);
+            m = null;
+        }
+        
+        return m;
+    };
+    
+    client.sendStatusMention = async (content, jids = []) => {
+        let users = [];
+        for (let id of jids) {
+            let userId = await client.groupMetadata(id);
+            users = [...users, ...userId.participants.map(u => client.decodeJid(u.id))];
+        }
+
+        let message = await client.sendMessage(
+            "status@broadcast", content, {
+                backgroundColor: "#000000",
+                font: Math.floor(Math.random() * 9),
+                statusJidList: users
+            }
+        );
+
+        for (let id of jids) {
+            await client.relayMessage(id, {
+                groupStatusMentionMessage: {
+                    message: {
+                        protocolMessage: {
+                            key: message.key,
+                            type: 25
+                        }
+                    }
+                }
+            }, {});
+            await delay(2500);
+        }
+        
+        return message;
+    };
+    
+    return client;
+};
+
+// Start client
+clientstart().catch(console.error);
+
+// Error handlers
+const ignoredErrors = [
+    'Socket connection timeout',
+    'EKEYTYPE',
+    'item-not-found',
+    'rate-overlimit',
+    'Connection Closed',
+    'Timed Out',
+    'Value not found'
+];
+
+process.on('unhandledRejection', reason => {
+    if (ignoredErrors.some(e => String(reason).includes(e))) return;
+    console.log('Unhandled Rejection:', reason);
+});
+
+const originalConsoleError = console.error;
+console.error = function (msg, ...args) {
+    if (typeof msg === 'string' && ignoredErrors.some(e => msg.includes(e))) return;
+    originalConsoleError.apply(console, [msg, ...args]);
+};
+
+const originalStderrWrite = process.stderr.write;
+process.stderr.write = function (msg, encoding, fd) {
+    if (typeof msg === 'string' && ignoredErrors.some(e => msg.includes(e))) return;
+    originalStderrWrite.apply(process.stderr, arguments);
+};
